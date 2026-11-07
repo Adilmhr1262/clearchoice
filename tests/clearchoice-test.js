@@ -308,6 +308,18 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   check('print: score text shows value', (await page.locator('.score-print').first().textContent()).includes('/ 10'));
   await page.emulateMedia({ media: 'screen' });
 
+  // --- live gap: toasts must not appear in print ---
+  await page.locator('table.compare tbody tr').nth(0).locator('.score-note-btn').first().click();
+  await page.waitForSelector('#note-text');
+  await page.fill('#note-text', 'Print toast check.');
+  await page.click('.dialog-actions .btn:last-child');
+  await sleep(300);
+  check('toast visible on screen after saving a note', (await page.locator('.toast:text("Note saved.")').count()) === 1);
+  await page.emulateMedia({ media: 'print' });
+  await sleep(200);
+  check('print: toast root hidden', (await page.locator('.toast-root:visible').count()) === 0);
+  await page.emulateMedia({ media: 'screen' });
+
   // --- round 3: privacy wording ---
   await page.click('a[data-nav="guide"]');
   await sleep(300);

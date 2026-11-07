@@ -383,6 +383,7 @@ table.compare input[type="number"] { width: 4.6rem; text-align: right; }
 /* Print: clean comparison report */
 @media print {
   .app-header, .app-footer, .workspace-toolbar, .no-print { display: none !important; }
+  .toast-root, #dialog-root { display: none !important; }
   body { background: #fff; }
   .view { max-width: none; padding: 0; }
   .card, .table-wrap { box-shadow: none; border-color: #999; }
