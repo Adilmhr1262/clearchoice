@@ -296,6 +296,7 @@ table.compare input[type="number"] { width: 4.6rem; text-align: right; }
   display: inline-block; width: 8px; height: 8px; border-radius: 50%;
   background: var(--color-accent); margin-left: 0.3rem; vertical-align: middle;
 }
+.score-print { display: none; }
 .score-note-btn { min-height: 32px; min-width: 32px; padding: 0.1rem 0.45rem; font-size: 0.82rem; }
 .total-cell { font-weight: 800; color: var(--color-text-strong); white-space: nowrap; }
 .criterion-head { font-weight: 700; }
@@ -388,6 +389,8 @@ table.compare input[type="number"] { width: 4.6rem; text-align: right; }
   .option-cards { display: none !important; }
   .table-wrap { display: block !important; overflow: visible; }
   table.compare { min-width: 0; }
+  table.compare input[type="number"] { display: none !important; }
+  .score-print { display: inline !important; }
   a { color: #000; text-decoration: none; }
 }
 

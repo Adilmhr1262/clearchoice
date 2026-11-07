@@ -9,7 +9,7 @@ Compare options with your own weighted criteria, privately in your browser. Pick
 - Weights 1–5 per criterion, scores 0–10 per option
 - Weighted totals and rankings, with ties flagged and missing scores shown clearly
 - Notes on individual scores, listed together and included in the printed report
-- Automatic saving in local storage — no account, no server
+- Automatic saving in local storage — no account, no backend
 - Export and import decisions as validated JSON (invalid files rejected whole, nothing changed)
 - Print a clean comparison report
 - Starts completely empty; responsive table on desktop, stacked option cards on mobile
@@ -31,6 +31,10 @@ Each option's weighted total is the sum of (weight × score) across scored crite
 
 Open `index.html` in a browser, or serve the folder with any static server, for example `python3 -m http.server`.
 
+## Tests
+
+`tests/clearchoice-test.js` is a Playwright suite (headless Firefox) covering the dashboard, scoring maths, ties, missing scores, notes, reorder, import validation (including duplicate-ID rejection), focus preservation, dialog focus trap, print output, offline directory navigation, and the 375px layout. To run it, serve the folder on port 8141 (`python3 -m http.server 8141`), install Playwright (`npm install playwright-core`, plus a Firefox build), then run `node tests/clearchoice-test.js`.
+
 ## Privacy
 
-All data stays in the browser's local storage on the device. The app makes no network requests of its own, so decision content is not transmitted anywhere. Export downloads a JSON file you control.
+All data stays in the browser's local storage on the device. The app requests only its own static files; decision content is never transmitted. Export downloads a JSON file you control.

@@ -1,6 +1,6 @@
 /* ClearChoice service worker — cache-first for the app shell, so the app opens offline. */
 var CACHE = 'clearchoice-v1';
-var FILES = ['index.html', 'style.css', 'app.js', 'manifest.webmanifest'];
+var FILES = ['/', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest'];
 
 self.addEventListener('install', function (event) {
   event.waitUntil(
@@ -19,6 +19,18 @@ self.addEventListener('activate', function (event) {
 
 self.addEventListener('fetch', function (event) {
   if (event.request.method !== 'GET') return;
+  /* Navigation (including the directory URL /clearchoice/ on GitHub Pages):
+     try the network, fall back to the cached app shell when offline. */
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request).catch(function () {
+        return caches.match(event.request).then(function (cached) {
+          return cached || caches.match('index.html');
+        });
+      })
+    );
+    return;
+  }
   event.respondWith(
     caches.match(event.request).then(function (cached) {
       return cached || fetch(event.request).catch(function () {

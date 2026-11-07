@@ -6,7 +6,7 @@
   var EXPORT_APP = 'clearchoice';
   var EXPORT_VERSION = 1;
 
-  var state = { decisions: [], currentId: null };
+  var state = { decisions: [], currentId: null, view: 'decisions' };
   var storageOK = true;
   var lastFocus = null;
 
@@ -143,8 +143,11 @@
     if (data.app !== EXPORT_APP) return 'This file is not a ClearChoice backup.';
     if (data.version !== EXPORT_VERSION) return 'Unsupported backup version.';
     if (!Array.isArray(data.decisions)) return 'Backup has no decisions list.';
+    var seenIds = {};
     for (var i = 0; i < data.decisions.length; i++) {
       if (!isValidDecision(data.decisions[i])) return 'Decision ' + (i + 1) + ' in the file is invalid.';
+      if (seenIds[data.decisions[i].id]) return 'Two decisions in the file share the same ID.';
+      seenIds[data.decisions[i].id] = true;
     }
     return null;
   }
@@ -209,8 +212,17 @@
 
   /* ---------- dialogs ---------- */
 
+  function setBackgroundInert(on) {
+    ['.app-header', '.app-footer'].forEach(function (sel) {
+      var node = document.querySelector(sel);
+      if (node) node.inert = on;
+    });
+    viewEl.inert = on;
+  }
+
   function openDialog(title, buildBody, actions) {
     lastFocus = document.activeElement;
+    setBackgroundInert(true);
     dialogRoot.innerHTML = '';
     var overlay = el('div', { class: 'dialog-overlay' });
     var dialog = el('div', { class: 'dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': title });
@@ -240,13 +252,14 @@
         else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
       }
     });
-    var firstInput = dialog.querySelector('input, textarea, select');
-    (firstInput || dialog.querySelector('h2')).focus();
+    var firstFocusable = dialog.querySelector('input, textarea, select, button, a[href]');
+    (firstFocusable || dialog.querySelector('h2')).focus();
     return dialog;
   }
 
   function closeDialog() {
     dialogRoot.innerHTML = '';
+    setBackgroundInert(false);
     if (lastFocus && document.contains(lastFocus)) lastFocus.focus();
     lastFocus = null;
   }
@@ -313,7 +326,7 @@
       { label: 'Cancel', kind: 'btn-secondary' },
       { label: 'Save note', kind: '', onClick: function () {
         cell.note = area.value.trim();
-        touch(d); save(); render();
+        touch(d); save(); rerender('note:' + optionId + ':' + criterionId);
         toast('Note saved.');
       } }
     ]);
@@ -321,19 +334,37 @@
 
   /* ---------- routing ---------- */
 
-  function render() { route(); }
+  function render() { rerender(null); }
+
+  function rerender(focusKey) {
+    if (state.view === 'comparison' && state.currentId) {
+      var d = getDecision(state.currentId);
+      if (d) { renderComparison(d, { initial: false, focusKey: focusKey }); return; }
+    }
+    if (state.view === 'guide') { renderGuide({ initial: false }); return; }
+    renderDecisions({ initial: false, focusKey: focusKey });
+  }
+
+  function restoreFocus(focusKey) {
+    if (!focusKey) return false;
+    var target = document.getElementById(focusKey) ||
+      viewEl.querySelector('[data-focus-key="' + focusKey + '"]');
+    if (target) { target.focus(); return true; }
+    return false;
+  }
 
   function route() {
     var hash = location.hash || '#/decisions';
     var parts = hash.replace(/^#\//, '').split('/');
-    if (parts[0] === 'guide') { renderGuide(); return; }
+    if (parts[0] === 'guide') { state.view = 'guide'; state.currentId = null; renderGuide({ initial: true }); return; }
     if (parts[0] === 'decision' && parts[1]) {
       var d = getDecision(parts[1]);
-      if (d) { renderComparison(d); return; }
+      if (d) { state.view = 'comparison'; state.currentId = d.id; renderComparison(d, { initial: true }); return; }
       location.hash = '#/decisions';
       return;
     }
-    renderDecisions();
+    state.view = 'decisions'; state.currentId = null;
+    renderDecisions({ initial: true });
   }
 
   function setNav(current) {
@@ -345,7 +376,8 @@
 
   /* ---------- views ---------- */
 
-  function renderDecisions() {
+  function renderDecisions(opts) {
+    opts = opts || {};
     setNav('decisions');
     state.currentId = null;
     viewEl.innerHTML = '';
@@ -354,7 +386,7 @@
       el('h1', { text: 'Your decisions', tabindex: -1 }),
       el('p', { class: 'lede', text: 'Compare options side by side with criteria that matter to you. Pick a decision to open its workspace, or start a new one.' })
     ]));
-    var newBtn = el('button', { type: 'button', class: 'btn', text: 'New decision' });
+    var newBtn = el('button', { type: 'button', class: 'btn', id: 'new-decision-btn', text: 'New decision' });
     newBtn.addEventListener('click', function () {
       promptTextDialog('New decision', 'What are you deciding?', '', 'Create decision', function (title) {
         var d = newDecision(title);
@@ -381,6 +413,7 @@
       startBtn.addEventListener('click', function () { newBtn.click(); });
       empty.appendChild(startBtn);
       viewEl.appendChild(empty);
+      finishRenderDecisions(opts);
       return;
     }
 
@@ -391,7 +424,7 @@
       var missing = results.reduce(function (n, r) { return n + r.missing; }, 0);
       var li = el('li', { class: 'card decision-item' });
       var main = el('div', { class: 'decision-main' });
-      var link = el('a', { href: '#/decision/' + d.id, text: d.title });
+      var link = el('a', { href: '#/decision/' + d.id, text: d.title, dataset: { focusKey: 'open:' + d.id } });
       main.appendChild(link);
       var metaParts = [
         d.options.length + (d.options.length === 1 ? ' option' : ' options'),
@@ -404,14 +437,14 @@
       li.appendChild(main);
 
       var actions = el('div', { class: 'decision-actions' });
-      var renameBtn = el('button', { type: 'button', class: 'icon-btn', text: 'Rename', 'aria-label': 'Rename ' + d.title });
+      var renameBtn = el('button', { type: 'button', class: 'icon-btn', text: 'Rename', 'aria-label': 'Rename ' + d.title, dataset: { focusKey: 'rename:' + d.id } });
       renameBtn.addEventListener('click', function () {
         promptTextDialog('Rename decision', 'Decision name', d.title, 'Save name', function (v) {
-          d.title = v; touch(d); save(); render();
+          d.title = v; touch(d); save(); rerender('rename:' + d.id);
           toast('Decision renamed.');
         });
       });
-      var dupBtn = el('button', { type: 'button', class: 'icon-btn', text: 'Duplicate', 'aria-label': 'Duplicate ' + d.title });
+      var dupBtn = el('button', { type: 'button', class: 'icon-btn', text: 'Duplicate', 'aria-label': 'Duplicate ' + d.title, dataset: { focusKey: 'dup:' + d.id } });
       dupBtn.addEventListener('click', function () {
         var copy = JSON.parse(JSON.stringify(d));
         copy.id = uid();
@@ -419,14 +452,14 @@
         copy.createdAt = Date.now();
         copy.updatedAt = Date.now();
         state.decisions.unshift(copy);
-        save(); render();
+        save(); rerender('open:' + copy.id);
         toast('Decision duplicated.');
       });
-      var delBtn = el('button', { type: 'button', class: 'icon-btn danger', text: 'Delete', 'aria-label': 'Delete ' + d.title });
+      var delBtn = el('button', { type: 'button', class: 'icon-btn danger', text: 'Delete', 'aria-label': 'Delete ' + d.title, dataset: { focusKey: 'del:' + d.id } });
       delBtn.addEventListener('click', function () {
         confirmDialog('Delete decision?', '"' + d.title + '" and all its options, criteria, scores and notes will be removed. This cannot be undone.', 'Delete', function () {
           state.decisions = state.decisions.filter(function (x) { return x.id !== d.id; });
-          save(); render();
+          save(); rerender('new-decision-btn');
           toast('Decision deleted.');
         });
       });
@@ -437,16 +470,28 @@
       list.appendChild(li);
     });
     viewEl.appendChild(list);
+    finishRenderDecisions(opts);
+  }
+
+  function finishRenderDecisions(opts) {
+    if (opts.initial) {
+      var h1 = viewEl.querySelector('h1');
+      if (h1) h1.focus();
+    } else if (opts.focusKey) {
+      restoreFocus(opts.focusKey);
+    }
   }
 
   function scoreInput(d, optionId, criterionId) {
     var cell = getCell(d, optionId, criterionId);
     var crit = d.criteria.find(function (c) { return c.id === criterionId; });
     var opt = d.options.find(function (o) { return o.id === optionId; });
+    var key = optionId + ':' + criterionId;
     var input = el('input', {
       type: 'number', min: '0', max: '10', step: '1',
       value: cell.value === null ? '' : String(cell.value),
-      'aria-label': 'Score for ' + opt.name + ' on ' + crit.name + ', 0 to 10, leave empty if not scored yet'
+      'aria-label': 'Score for ' + opt.name + ' on ' + crit.name + ', 0 to 10, leave empty if not scored yet',
+      dataset: { focusKey: 'score:' + key }
     });
     input.addEventListener('change', function () {
       var raw = input.value.trim();
@@ -458,9 +503,58 @@
         cell.value = n;
         input.value = String(n);
       }
-      touch(d); save(); render();
+      touch(d); save();
+      updateScorePrintSpans(key, cell.value);
+      refreshResults(d);
     });
     return input;
+  }
+
+  function updateScorePrintSpans(key, value) {
+    viewEl.querySelectorAll('[data-score-print-for="' + key + '"]').forEach(function (span) {
+      span.textContent = value === null ? 'Not scored' : String(value) + ' / 10';
+    });
+  }
+
+  function totalText(r) { return r.max > 0 ? r.total + ' / ' + r.max + ' (' + r.pct + '%)' : '—'; }
+
+  /* Update totals, ranks, summary and notices in place, without rebuilding
+     the workspace, so keyboard focus stays where the user is working. */
+  function refreshResults(d) {
+    var results = computeResults(d);
+    var missingTotal = results.reduce(function (n, r) { return n + r.missing; }, 0);
+    var rankedCount = results.filter(function (r) { return r.complete; }).length;
+    var leader = results.filter(function (r) { return r.complete; })
+      .sort(function (a, b) { return b.total - a.total; })[0] || null;
+
+    var setText = function (id, text) { var n = document.getElementById(id); if (n) n.textContent = text; };
+    setText('chip-leader-value', leader ? leader.option.name : 'None yet');
+    setText('chip-leader-sub', leader ? (leader.total + ' of ' + leader.max + ' points (' + leader.pct + '%)' + (leader.tie ? ' — tied' : '')) : 'Score every criterion to rank options.');
+    setText('chip-ranked-value', rankedCount + ' of ' + d.options.length);
+    setText('chip-missing-value', String(missingTotal));
+
+    var notice = document.getElementById('missing-notice');
+    if (notice) {
+      notice.hidden = !(missingTotal > 0 && d.options.length && d.criteria.length);
+      var noticeText = document.getElementById('missing-notice-text');
+      if (noticeText) noticeText.textContent = missingTotal + ' score' + (missingTotal === 1 ? '' : 's') + ' still missing. ';
+    }
+
+    results.forEach(function (r) {
+      var id = r.option.id;
+      viewEl.querySelectorAll('[data-total-for="' + id + '"]').forEach(function (n) { n.textContent = totalText(r); });
+      viewEl.querySelectorAll('[data-missing-for="' + id + '"]').forEach(function (n) { n.textContent = r.missing > 0 ? r.missing + ' missing' : ''; });
+      viewEl.querySelectorAll('[data-missing-for-card="' + id + '"]').forEach(function (n) { n.textContent = r.missing > 0 ? r.missing + ' score' + (r.missing === 1 ? '' : 's') + ' missing' : ''; });
+      viewEl.querySelectorAll('[data-rank-for="' + id + '"]').forEach(function (badge) {
+        if (r.complete) {
+          badge.className = 'rank-badge' + (r.tie ? ' tie' : '');
+          badge.textContent = 'Rank ' + r.rank + (r.tie ? ' — tie' : '');
+        } else {
+          badge.className = 'rank-badge incomplete';
+          badge.textContent = 'Not ranked';
+        }
+      });
+    });
   }
 
   function noteButton(d, optionId, criterionId) {
@@ -469,9 +563,10 @@
     var opt = d.options.find(function (o) { return o.id === optionId; });
     var btn = el('button', {
       type: 'button',
-      class: 'icon-btn score-note-btn',
+      class: 'icon-btn score-note-btn no-print',
       text: 'Note',
-      'aria-label': 'Note for ' + opt.name + ' on ' + crit.name + (cell.note ? ': ' + cell.note : '')
+      'aria-label': 'Note for ' + opt.name + ' on ' + crit.name + (cell.note ? ': ' + cell.note : ''),
+      dataset: { focusKey: 'note:' + optionId + ':' + criterionId }
     });
     if (cell.note) {
       var dot = el('span', { class: 'note-dot', 'aria-hidden': 'true' });
@@ -481,7 +576,8 @@
     return btn;
   }
 
-  function renderComparison(d) {
+  function renderComparison(d, opts) {
+    opts = opts || {};
     setNav('decisions');
     state.currentId = d.id;
     viewEl.innerHTML = '';
@@ -497,24 +593,24 @@
     headText.appendChild(el('h1', { text: d.title, tabindex: -1 }));
     headText.appendChild(el('p', { class: 'lede', text: 'Score each option from 0 to 10 on every criterion. Weights run from 1 (nice to have) to 5 (decisive). Totals update as you type, and everything saves automatically in your browser.' }));
     head.appendChild(headText);
-    var backLink = el('a', { class: 'btn btn-secondary', href: '#/decisions', text: 'All decisions' });
+    var backLink = el('a', { class: 'btn btn-secondary no-print', href: '#/decisions', text: 'All decisions' });
     head.appendChild(backLink);
     viewEl.appendChild(head);
 
     /* toolbar */
     var toolbar = el('div', { class: 'workspace-toolbar no-print' });
-    var addOptBtn = el('button', { type: 'button', class: 'btn btn-secondary', text: 'Add option' });
+    var addOptBtn = el('button', { type: 'button', class: 'btn btn-secondary', id: 'add-option-btn', text: 'Add option' });
     addOptBtn.addEventListener('click', function () {
       promptTextDialog('Add option', 'Option name', '', 'Add option', function (v) {
         d.options.push({ id: uid(), name: v });
-        touch(d); save(); render();
+        touch(d); save(); rerender('add-option-btn');
       });
     });
-    var addCritBtn = el('button', { type: 'button', class: 'btn btn-secondary', text: 'Add criterion' });
+    var addCritBtn = el('button', { type: 'button', class: 'btn btn-secondary', id: 'add-criterion-btn', text: 'Add criterion' });
     addCritBtn.addEventListener('click', function () {
       promptTextDialog('Add criterion', 'Criterion name', '', 'Add criterion', function (v) {
         d.criteria.push({ id: uid(), name: v, weight: 3 });
-        touch(d); save(); render();
+        touch(d); save(); rerender('add-criterion-btn');
       });
     });
     var exportBtn = el('button', { type: 'button', class: 'btn btn-ghost', text: 'Export this decision' });
@@ -542,29 +638,27 @@
       start.appendChild(el('p', { text: msg }));
       viewEl.appendChild(start);
     }
-    if (missingTotal > 0 && d.options.length && d.criteria.length) {
-      var miss = el('div', { class: 'notice', role: 'status' });
-      miss.appendChild(el('p', {}, [
-        document.createTextNode(missingTotal + ' score' + (missingTotal === 1 ? '' : 's') + ' still missing. '),
-        el('strong', { text: 'Totals below are partial until every cell is scored.' })
-      ]));
-      viewEl.appendChild(miss);
-    }
+    var miss = el('div', { class: 'notice', role: 'status', id: 'missing-notice', hidden: !(missingTotal > 0 && d.options.length && d.criteria.length) });
+    miss.appendChild(el('p', {}, [
+      el('span', { id: 'missing-notice-text', text: missingTotal + ' score' + (missingTotal === 1 ? '' : 's') + ' still missing. ' }),
+      el('strong', { text: 'Totals below are partial until every cell is scored.' })
+    ]));
+    viewEl.appendChild(miss);
 
     /* results summary */
     if (d.options.length && d.criteria.length) {
       var summary = el('section', { class: 'results-summary', 'aria-label': 'Results summary', 'aria-live': 'polite' });
       var leaderChip = el('div', { class: 'summary-chip' });
       leaderChip.appendChild(el('div', { class: 'chip-label', text: 'Leading option' }));
-      leaderChip.appendChild(el('div', { class: 'chip-value', text: leader ? leader.option.name : 'None yet' }));
-      leaderChip.appendChild(el('div', { class: 'chip-sub', text: leader ? (leader.total + ' of ' + leader.max + ' points (' + leader.pct + '%)' + (leader.tie ? ' — tied' : '')) : 'Score every criterion to rank options.' }));
+      leaderChip.appendChild(el('div', { class: 'chip-value', id: 'chip-leader-value', text: leader ? leader.option.name : 'None yet' }));
+      leaderChip.appendChild(el('div', { class: 'chip-sub', id: 'chip-leader-sub', text: leader ? (leader.total + ' of ' + leader.max + ' points (' + leader.pct + '%)' + (leader.tie ? ' — tied' : '')) : 'Score every criterion to rank options.' }));
       var rankedChip = el('div', { class: 'summary-chip' });
       rankedChip.appendChild(el('div', { class: 'chip-label', text: 'Ranked' }));
-      rankedChip.appendChild(el('div', { class: 'chip-value', text: rankedCount + ' of ' + d.options.length }));
+      rankedChip.appendChild(el('div', { class: 'chip-value', id: 'chip-ranked-value', text: rankedCount + ' of ' + d.options.length }));
       rankedChip.appendChild(el('div', { class: 'chip-sub', text: 'Options with every criterion scored.' }));
       var missingChip = el('div', { class: 'summary-chip' });
       missingChip.appendChild(el('div', { class: 'chip-label', text: 'Scores missing' }));
-      missingChip.appendChild(el('div', { class: 'chip-value', text: String(missingTotal) }));
+      missingChip.appendChild(el('div', { class: 'chip-value', id: 'chip-missing-value', text: String(missingTotal) }));
       missingChip.appendChild(el('div', { class: 'chip-sub', text: 'Empty cells are not counted in totals.' }));
       summary.appendChild(leaderChip);
       summary.appendChild(rankedChip);
@@ -595,24 +689,24 @@
         var tr = el('tr', {});
         tr.appendChild(el('th', { scope: 'row', text: r.option.name }));
         d.criteria.forEach(function (crit) {
+          var cell = getCell(d, r.option.id, crit.id);
           var td = el('td', { class: 'score-cell num-col' });
           td.appendChild(scoreInput(d, r.option.id, crit.id));
           td.appendChild(document.createTextNode(' '));
           td.appendChild(noteButton(d, r.option.id, crit.id));
+          td.appendChild(el('span', { class: 'score-print', dataset: { scorePrintFor: r.option.id + ':' + crit.id }, text: cell.value === null ? 'Not scored' : String(cell.value) + ' / 10' }));
           tr.appendChild(td);
         });
         var totalTd = el('td', { class: 'total-cell num-col' });
-        totalTd.appendChild(document.createTextNode(r.max > 0 ? r.total + ' / ' + r.max + ' (' + r.pct + '%)' : '—'));
-        if (r.missing > 0) {
-          totalTd.appendChild(el('br', {}));
-          totalTd.appendChild(el('span', { class: 'missing-flag', text: r.missing + ' missing' }));
-        }
+        totalTd.appendChild(el('span', { dataset: { totalFor: r.option.id }, text: totalText(r) }));
+        totalTd.appendChild(el('br', {}));
+        totalTd.appendChild(el('span', { class: 'missing-flag', dataset: { missingFor: r.option.id }, text: r.missing > 0 ? r.missing + ' missing' : '' }));
         tr.appendChild(totalTd);
         var rankTd = el('td', {});
         if (r.complete) {
-          rankTd.appendChild(el('span', { class: 'rank-badge' + (r.tie ? ' tie' : ''), text: 'Rank ' + r.rank + (r.tie ? ' — tie' : '') }));
+          rankTd.appendChild(el('span', { class: 'rank-badge' + (r.tie ? ' tie' : ''), dataset: { rankFor: r.option.id }, text: 'Rank ' + r.rank + (r.tie ? ' — tie' : '') }));
         } else {
-          rankTd.appendChild(el('span', { class: 'rank-badge incomplete', text: 'Not ranked' }));
+          rankTd.appendChild(el('span', { class: 'rank-badge incomplete', dataset: { rankFor: r.option.id }, text: 'Not ranked' }));
         }
         tr.appendChild(rankTd);
         tbody.appendChild(tr);
@@ -628,9 +722,9 @@
         var cardHead = el('div', { class: 'option-card-head' });
         cardHead.appendChild(el('h3', { text: r.option.name }));
         if (r.complete) {
-          cardHead.appendChild(el('span', { class: 'rank-badge' + (r.tie ? ' tie' : ''), text: 'Rank ' + r.rank + (r.tie ? ' — tie' : '') }));
+          cardHead.appendChild(el('span', { class: 'rank-badge' + (r.tie ? ' tie' : ''), dataset: { rankFor: r.option.id }, text: 'Rank ' + r.rank + (r.tie ? ' — tie' : '') }));
         } else {
-          cardHead.appendChild(el('span', { class: 'rank-badge incomplete', text: 'Not ranked' }));
+          cardHead.appendChild(el('span', { class: 'rank-badge incomplete', dataset: { rankFor: r.option.id }, text: 'Not ranked' }));
         }
         card.appendChild(cardHead);
         d.criteria.forEach(function (crit) {
@@ -647,11 +741,9 @@
         });
         var foot = el('p', {});
         foot.appendChild(el('strong', { text: 'Weighted total: ' }));
-        foot.appendChild(document.createTextNode(r.max > 0 ? r.total + ' / ' + r.max + ' (' + r.pct + '%)' : '—'));
-        if (r.missing > 0) {
-          foot.appendChild(document.createTextNode(' '));
-          foot.appendChild(el('span', { class: 'missing-flag', text: r.missing + ' score' + (r.missing === 1 ? '' : 's') + ' missing' }));
-        }
+        foot.appendChild(el('span', { dataset: { totalFor: r.option.id }, text: totalText(r) }));
+        foot.appendChild(document.createTextNode(' '));
+        foot.appendChild(el('span', { class: 'missing-flag', dataset: { missingForCard: r.option.id }, text: r.missing > 0 ? r.missing + ' score' + (r.missing === 1 ? '' : 's') + ' missing' : '' }));
         card.appendChild(foot);
         cards.appendChild(card);
       });
@@ -663,8 +755,12 @@
     viewEl.appendChild(buildCriteriaEditor(d));
     viewEl.appendChild(buildNotesList(d));
 
-    var h1 = viewEl.querySelector('h1');
-    if (h1) h1.focus();
+    if (opts.initial) {
+      var h1 = viewEl.querySelector('h1');
+      if (h1) h1.focus();
+    } else if (opts.focusKey) {
+      restoreFocus(opts.focusKey);
+    }
   }
 
   function moveItem(arr, index, dir) {
@@ -684,24 +780,24 @@
     var list = el('ul', { class: 'editor-list' });
     d.options.forEach(function (opt, idx) {
       var li = el('li', {});
-      var nameInput = el('input', { type: 'text', value: opt.name, 'aria-label': 'Option name' });
+      var nameInput = el('input', { type: 'text', value: opt.name, 'aria-label': 'Option name', dataset: { focusKey: 'optname:' + opt.id } });
       nameInput.addEventListener('change', function () {
         var v = nameInput.value.trim();
         if (!v) { nameInput.value = opt.name; toast('Option name cannot be empty.'); return; }
-        opt.name = v; touch(d); save(); render();
+        opt.name = v; touch(d); save(); rerender('optname:' + opt.id);
       });
       li.appendChild(nameInput);
       var controls = el('div', { class: 'item-controls' });
-      var up = el('button', { type: 'button', class: 'icon-btn', text: 'Up', 'aria-label': 'Move ' + opt.name + ' up', disabled: idx === 0 });
-      up.addEventListener('click', function () { if (moveItem(d.options, idx, -1)) { touch(d); save(); render(); } });
-      var down = el('button', { type: 'button', class: 'icon-btn', text: 'Down', 'aria-label': 'Move ' + opt.name + ' down', disabled: idx === d.options.length - 1 });
-      down.addEventListener('click', function () { if (moveItem(d.options, idx, 1)) { touch(d); save(); render(); } });
+      var up = el('button', { type: 'button', class: 'icon-btn', text: 'Up', 'aria-label': 'Move ' + opt.name + ' up', disabled: idx === 0, dataset: { focusKey: 'optup:' + opt.id } });
+      up.addEventListener('click', function () { if (moveItem(d.options, idx, -1)) { touch(d); save(); rerender('optup:' + opt.id); } });
+      var down = el('button', { type: 'button', class: 'icon-btn', text: 'Down', 'aria-label': 'Move ' + opt.name + ' down', disabled: idx === d.options.length - 1, dataset: { focusKey: 'optdown:' + opt.id } });
+      down.addEventListener('click', function () { if (moveItem(d.options, idx, 1)) { touch(d); save(); rerender('optdown:' + opt.id); } });
       var del = el('button', { type: 'button', class: 'icon-btn danger', text: 'Remove', 'aria-label': 'Remove option ' + opt.name });
       del.addEventListener('click', function () {
         confirmDialog('Remove option?', '"' + opt.name + '" and its scores will be removed from this decision.', 'Remove', function () {
           d.options = d.options.filter(function (o) { return o.id !== opt.id; });
           delete d.scores[opt.id];
-          touch(d); save(); render();
+          touch(d); save(); rerender('add-option-btn');
           toast('Option removed.');
         });
       });
@@ -724,37 +820,37 @@
     var list = el('ul', { class: 'editor-list' });
     d.criteria.forEach(function (crit, idx) {
       var li = el('li', {});
-      var nameInput = el('input', { type: 'text', value: crit.name, 'aria-label': 'Criterion name' });
+      var nameInput = el('input', { type: 'text', value: crit.name, 'aria-label': 'Criterion name', dataset: { focusKey: 'critname:' + crit.id } });
       nameInput.addEventListener('change', function () {
         var v = nameInput.value.trim();
         if (!v) { nameInput.value = crit.name; toast('Criterion name cannot be empty.'); return; }
-        crit.name = v; touch(d); save(); render();
+        crit.name = v; touch(d); save(); rerender('critname:' + crit.id);
       });
       li.appendChild(nameInput);
       var controls = el('div', { class: 'item-controls' });
       var weightWrap = el('label', { class: 'weight-control', text: 'Weight ' });
-      var select = el('select', { 'aria-label': 'Weight for ' + crit.name });
+      var select = el('select', { 'aria-label': 'Weight for ' + crit.name, dataset: { focusKey: 'weight:' + crit.id } });
       [1, 2, 3, 4, 5].forEach(function (w) {
         var o = el('option', { value: String(w), text: String(w) });
         if (w === crit.weight) o.selected = true;
         select.appendChild(o);
       });
       select.addEventListener('change', function () {
-        crit.weight = Number(select.value); touch(d); save(); render();
+        crit.weight = Number(select.value); touch(d); save(); rerender('weight:' + crit.id);
       });
       weightWrap.appendChild(select);
       weightWrap.appendChild(document.createTextNode(' of 5'));
       controls.appendChild(weightWrap);
-      var up = el('button', { type: 'button', class: 'icon-btn', text: 'Up', 'aria-label': 'Move ' + crit.name + ' up', disabled: idx === 0 });
-      up.addEventListener('click', function () { if (moveItem(d.criteria, idx, -1)) { touch(d); save(); render(); } });
-      var down = el('button', { type: 'button', class: 'icon-btn', text: 'Down', 'aria-label': 'Move ' + crit.name + ' down', disabled: idx === d.criteria.length - 1 });
-      down.addEventListener('click', function () { if (moveItem(d.criteria, idx, 1)) { touch(d); save(); render(); } });
+      var up = el('button', { type: 'button', class: 'icon-btn', text: 'Up', 'aria-label': 'Move ' + crit.name + ' up', disabled: idx === 0, dataset: { focusKey: 'critup:' + crit.id } });
+      up.addEventListener('click', function () { if (moveItem(d.criteria, idx, -1)) { touch(d); save(); rerender('critup:' + crit.id); } });
+      var down = el('button', { type: 'button', class: 'icon-btn', text: 'Down', 'aria-label': 'Move ' + crit.name + ' down', disabled: idx === d.criteria.length - 1, dataset: { focusKey: 'critdown:' + crit.id } });
+      down.addEventListener('click', function () { if (moveItem(d.criteria, idx, 1)) { touch(d); save(); rerender('critdown:' + crit.id); } });
       var del = el('button', { type: 'button', class: 'icon-btn danger', text: 'Remove', 'aria-label': 'Remove criterion ' + crit.name });
       del.addEventListener('click', function () {
         confirmDialog('Remove criterion?', '"' + crit.name + '" and its scores will be removed from this decision.', 'Remove', function () {
           d.criteria = d.criteria.filter(function (c) { return c.id !== crit.id; });
           Object.keys(d.scores).forEach(function (optId) { delete d.scores[optId][crit.id]; });
-          touch(d); save(); render();
+          touch(d); save(); rerender('add-criterion-btn');
           toast('Criterion removed.');
         });
       });
@@ -791,14 +887,15 @@
     return section;
   }
 
-  function renderGuide() {
+  function renderGuide(opts) {
+    opts = opts || {};
     setNav('guide');
     state.currentId = null;
     viewEl.innerHTML = '';
     var head = el('div', { class: 'view-head' });
     head.appendChild(el('div', {}, [
       el('h1', { text: 'Guide & Privacy', tabindex: -1 }),
-      el('p', { class: 'lede', text: 'How ClearChoice scoring works, and what happens to your data (short answer: nothing leaves your browser).' })
+      el('p', { class: 'lede', text: 'How ClearChoice scoring works, and what happens to your data (short answer: your decisions stay in your browser).' })
     ]));
     viewEl.appendChild(head);
 
@@ -834,8 +931,8 @@
 
     var privacy = el('section', { class: 'card' });
     privacy.appendChild(el('h2', { text: 'Privacy' }));
-    privacy.appendChild(el('p', { text: 'ClearChoice has no account, no server, and no analytics. Decisions, scores, and notes are saved only in this browser’s local storage, on this device.' }));
-    privacy.appendChild(el('p', { text: 'The app makes no network requests of its own, so your decision content is not transmitted anywhere. The only way data leaves this browser is when you choose Export, which downloads a JSON file you control, or Print, which goes to your printer.' }));
+    privacy.appendChild(el('p', { text: 'ClearChoice has no account, no backend, and no analytics. Decisions, scores, and notes are saved only in this browser’s local storage, on this device.' }));
+    privacy.appendChild(el('p', { text: 'The app requests only its own static files; decision content is never transmitted. The only way data leaves this browser is when you choose Export, which downloads a JSON file you control, or Print, which goes to your printer.' }));
     privacy.appendChild(el('p', { text: 'Clearing this browser’s site data will delete your decisions, so export a backup file if they matter to you.' }));
     grid.appendChild(privacy);
 
@@ -846,6 +943,11 @@
     grid.appendChild(backup);
 
     viewEl.appendChild(grid);
+
+    if (opts.initial) {
+      var h1 = viewEl.querySelector('h1');
+      if (h1) h1.focus();
+    }
   }
 
   /* ---------- header export/import ---------- */
