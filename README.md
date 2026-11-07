@@ -33,7 +33,9 @@ Open `index.html` in a browser, or serve the folder with any static server, for 
 
 ## Tests
 
-`tests/clearchoice-test.js` is a Playwright suite (headless Firefox) covering the dashboard, scoring maths, ties, missing scores, notes, reorder, import validation (including duplicate-ID rejection), focus preservation, dialog focus trap, print output, offline directory navigation, and the 375px layout. To run it, serve the folder on port 8141 (`python3 -m http.server 8141`), install Playwright (`npm install playwright-core`, plus a Firefox build), then run `node tests/clearchoice-test.js`.
+`tests/clearchoice-test.js` is a Playwright suite (headless Firefox) covering the dashboard, scoring maths, ties, missing scores, notes, reorder, import validation (including duplicate-ID rejection), focus preservation, responsive score sync across breakpoints, dialog focus trap, print output, offline directory navigation, and the 375px layout. To run it, serve the folder on port 8141 (`python3 -m http.server 8141`), install Playwright (`npm install playwright-core`, plus a Firefox build), then run `node tests/clearchoice-test.js`.
+
+`tests/clearchoice-subpath-test.js` checks the GitHub Pages layout: the app served under `/clearchoice/` with the domain root returning 404. It starts its own server on port 8143 and verifies the service worker installs and offline navigation to `/clearchoice/` loads the app. Run it with `node tests/clearchoice-subpath-test.js` (same Playwright install).
 
 ## Privacy
 

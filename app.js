@@ -505,6 +505,12 @@
       }
       touch(d); save();
       updateScorePrintSpans(key, cell.value);
+      /* The table (desktop) and the stacked cards (mobile) each render an
+         input for the same cell; keep the hidden twin in sync so crossing
+         the responsive breakpoint never shows a stale value. */
+      viewEl.querySelectorAll('[data-focus-key="score:' + key + '"]').forEach(function (other) {
+        if (other !== input) other.value = cell.value === null ? '' : String(cell.value);
+      });
       refreshResults(d);
     });
     return input;

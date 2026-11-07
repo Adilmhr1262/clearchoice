@@ -1,6 +1,8 @@
 /* ClearChoice service worker — cache-first for the app shell, so the app opens offline. */
 var CACHE = 'clearchoice-v1';
-var FILES = ['/', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest'];
+/* './' is scope-relative: on GitHub Pages the app lives under /clearchoice/,
+   where the domain root '/' would 404 and fail installation. */
+var FILES = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest'];
 
 self.addEventListener('install', function (event) {
   event.waitUntil(

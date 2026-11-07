@@ -249,6 +249,28 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await firstScore.press('Tab');
   await sleep(300);
 
+  // --- round 4: responsive score sync across breakpoints, both directions ---
+  // desktop -> mobile: edit the table input, resize, the card input must match
+  await firstScore.fill('7');
+  await firstScore.press('Tab');
+  await sleep(300);
+  await page.setViewportSize({ width: 375, height: 800 });
+  await sleep(300);
+  const cardScore = page.locator('.option-cards .option-card').nth(0).locator('input[type="number"]').nth(0);
+  check('mobile card input syncs after desktop edit', (await cardScore.inputValue()) === '7');
+  // mobile -> desktop: edit the card input, resize back, the table input must match
+  await cardScore.fill('9');
+  await cardScore.press('Tab');
+  await sleep(300);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await sleep(300);
+  check('desktop table input syncs after mobile edit', (await firstScore.inputValue()) === '9');
+  bodyText = await page.textContent('table.compare tbody');
+  check('total reflects the synced score (45 / 50)', bodyText.includes('45 / 50'), bodyText);
+  await firstScore.fill('8');
+  await firstScore.press('Tab');
+  await sleep(300);
+
   // --- round 3: weight change keeps focus on the select ---
   const weightSelect = page.locator('.editor-list select').first();
   await weightSelect.click();
